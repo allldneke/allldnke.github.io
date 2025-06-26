@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>DitherCam 8‑bit (Secure)</title>
+  <style>
+    html,body{margin:0;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#111;color:#fff;font-family:system-ui,sans-serif;text-align:center}
+    video{max-width:100%;height:auto;border-radius:.5rem;box-shadow:0 4px 12px rgba(0,0,0,.6);display:none}
+    #btns{margin-top:1rem;display:flex;gap:.75rem}
+    button{padding:.9rem 1.4rem;font-size:1rem;border:none;border-radius:.75rem;background:#0d6efd;color:#fff;font-weight:600;box-shadow:0 4px 10px rgba(0,0,0,.4);cursor:pointer}
+    button:active{transform:translateY(2px)}
+    canvas{display:none}
+    #msg{max-width:22rem;margin-bottom:1rem;line-height:1.4}
+  </style>
+</head>
+<body>
+  <div id="msg">Tap <strong>Enable Camera</strong> to start.<br>This page must be served from <em>https://</em> or <em>localhost</em>.</div>
+  <video id="view" autoplay playsinline></video>
+  <canvas id="offscreen"></canvas>
+  <div id="btns">
+    <button id="start">🎥 Enable Camera</button>
+    <button id="capture" style="display:none">📸 Capture</button>
+  </div>
+
+  <script>
+    const startBtn=document.getElementById('start');
+    const captureBtn=document.getElementById('capture');
+    const video=document.getElementById('view');
+    const canvas=document.getElementById('offscreen');
+    const ctx=canvas.getContext('2d',{willReadFrequently:true});
+    let runningStream=null;
+
+    /* orientation‑aware canvas size */
+    function setCanvasSize(){
+      if(window.innerWidth>window.innerHeight){canvas.width=320;canvas.height=240;}
+      else{canvas.width=240;canvas.height=320;}
+    }
+    setCanvasSize();
+    window.addEventListener('resize',setCanvasSize);
+
+    /* Ordered dither + 8‑bit RGB332 */
+    function orderedDither8(imageData){
+      const bayer=[0,8,2,10,12,4,14,6,3,11,1,9,15,7,13,5];
+      const {data,width,height}=imageData;
+      for(let y=0;y<height;y++){
+        for(let x=0;x<width;x++){
+          const i=(y*width+x)*4;
+          const r=data[i],g=data[i+1],b=data[i+2];
+          const t=bayer[((y&3)<<2)|(x&3)]/16;
+          const rq=Math.min(7,Math.floor((r/255+t)*7));
+          const gq=Math.min(7,Math.floor((g/255+t)*7));
+          const bq=Math.min(3,Math.floor((b/255+t)*3));
+          data[i]=Math.round(rq*255/7);
+          data[i+1]=Math.round(gq*255/7);
+          data[i+2]=Math.round(bq*255/3);
+        }
+      }
+      return imageData;
+    }
+
+    async function enableCamera(){
+      /* enforce secure context */
+      if(location.protocol!=='https:' && location.hostname!=='localhost' && location.hostname!=='127.0.0.1'){
+        alert('Browsers allow camera access only on HTTPS or from localhost.\n\nRun a local server or upload to an HTTPS host (e.g. GitHub Pages).');
+        return;
+      }
+      try{
+        runningStream = await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'}});
+        video.srcObject=runningStream;
+        video.style.display='block';
+        startBtn.style.display='none';
+        captureBtn.style.display='inline-block';
+        document.getElementById('msg').style.display='none';
+      }catch(err){
+        alert('Could not access camera: '+err.message);
+      }
+    }
+
+    startBtn.addEventListener('click',enableCamera);
+
+    captureBtn.addEventListener('click',()=>{
+      if(!runningStream) return;
+      ctx.drawImage(video,0,0,canvas.width,canvas.height);
+      let frame=ctx.getImageData(0,0,canvas.width,canvas.height);
+      frame=orderedDither8(frame);
+      ctx.putImageData(frame,0,0);
+      canvas.toBlob(blob=>{
+        const url=URL.createObjectURL(blob);
+        const a=document.createElement('a');
+        a.href=url;
+        a.download='dithercam_'+Date.now()+'.png';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(()=>URL.revokeObjectURL(url),10000);
+      },'image/png');
+    });
+  </script>
+</body>
+</html>
